@@ -1,0 +1,16 @@
+{
+  "name": "migration",
+  "version": "1.0.0",
+  "description": "",
+  "main": "script.js",
+  "scripts": {
+    "start": "node --max-old-space-size=8192 script.js",
+    "buildConversationDB": "node buildConversationDb.js",
+    "buildMessageDB": "node buildMessageDb.js"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "mysql": "^2.18.1"
+  }
+}
