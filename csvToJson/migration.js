@@ -6,6 +6,10 @@ let fileUtils = require("./util/fileUtils");
 let stringUtils = require("./util/stringUtils");
 let dbUtils = require("./util/dbUtils");
 
+const readMoreEndPoint = 'https://oneview.ixigo.com/migration';
+const inMessageSeprator = '<br>';
+const messageSeprator = '<br><br>';
+
 
 dbUtils.createConnection();
 
@@ -67,13 +71,17 @@ class Migration {
         indexCreated++;
       } catch (error) {
         if (error.code === 'ER_DUP_ENTRY') {
-          let data = await dbUtils.getDataFromDb(this.tableName, { 'Conversation_ID': conversations[property]['ConversationID'] });
+
+          let data = await dbUtils.getDataFromDb(this.tableName, { 'ticket_id': conversations[property]['ConversationAPIID'] });
           if (data) {
             let fields = {
-              Data: this.mergeMessages(data[0]['Data'], conversations[property]['Extract']),
-              Update_at: conversations[property]['Update_at']
+              description: this.mergeMessages(data[0]['description'], conversations[property]['Extract']),
+              updated_date: conversations[property]['Update_at']
             }
-            await dbUtils.updateEntryToDB(this.tableName, conversations[property]['ConversationID'], fields);
+
+            // console.log(fields, conversations[property]['ConversationAPIID'], data);
+            // break
+            await dbUtils.updateEntryToDB(this.tableName, conversations[property]['ConversationAPIID'], fields);
             indexUpdated++
           }
         }
@@ -86,9 +94,9 @@ class Migration {
   }
 
   mergeMessages(oldMessages, newMessages) {
-    let totalMessage = [...new Set([...oldMessages.split('<br><br>'), ...newMessages.split('<br><br>')])];
+    let totalMessage = [...new Set([...oldMessages.split(messageSeprator), ...newMessages.split(messageSeprator)])];
     totalMessage.sort((a, b) => new Date(a.split(' | ')[0]) - new Date(b.split(' | ')[0]));
-    return totalMessage.join('<br><br>');
+    return totalMessage.join(messageSeprator);
   }
 
 
@@ -112,6 +120,8 @@ class Migration {
     let impactedConversation = {};
     let inbox = {};
 
+    let errorMessage = 0;
+
     for await (const line of rl) {
 
       if (index === 0) {
@@ -121,56 +131,54 @@ class Migration {
         if (stringUtils.hasContent(currentLine)) {
           let jsonObject = this.buildJsonResult(headers, currentLine);
 
-          if(inbox[jsonObject.Inbox] === undefined){
-            inbox[jsonObject.Inbox] = {totalMessage:1,incompleteMessage:0, percentage: 0}
-          }else{
-            inbox[jsonObject.Inbox]['totalMessage'] ++;
+          if (inbox[jsonObject.Inbox] === undefined) {
+            inbox[jsonObject.Inbox] = { totalMessage: 1, incompleteMessage: 0, percentage: 0 }
+          } else {
+            inbox[jsonObject.Inbox]['totalMessage']++;
           }
 
-          if(jsonObject['Extract'].split('<br>')[1].length >= 200){
+          if (jsonObject['Extract'].split(inMessageSeprator)[1].length >= 200) {
 
-            if(!impactedConversation[jsonObject.ConversationID]){
-              impactedConversation[jsonObject.ConversationID] = true; 
+            if (!impactedConversation[jsonObject.ConversationAPIID]) {
+              impactedConversation[jsonObject.ConversationAPIID] = true;
             }
 
-            if(inbox[jsonObject.Inbox]){
-              inbox[jsonObject.Inbox]['incompleteMessage'] ++;
+            if (inbox[jsonObject.Inbox]) {
+              inbox[jsonObject.Inbox]['incompleteMessage']++;
               inbox[jsonObject.Inbox]['percentage'] = +(inbox[jsonObject.Inbox]['incompleteMessage'] / inbox[jsonObject.Inbox]['totalMessage'] * 100).toFixed(2);
             }
 
-            rateAbove200 ++;
+            rateAbove200++;
           }
 
-          if (conversationResult[jsonObject.ConversationID]) {
-            conversationResult[jsonObject.ConversationID] = this.mergeMessageToConversation(conversationResult[jsonObject.ConversationID], jsonObject)
+
+          if (conversationResult[jsonObject.ConversationAPIID]) {
+            conversationResult[jsonObject.ConversationAPIID] = this.mergeMessageToConversation(conversationResult[jsonObject.ConversationAPIID], jsonObject)
           } else {
-            conversationResult[jsonObject.ConversationID] = jsonObject;
+            conversationResult[jsonObject.ConversationAPIID] = jsonObject;
           }
-          // console.log( jsonObject )
 
         }
-
-
         this.printProgress('Line fetched', index + 1);
-      // break;
-
       }
 
 
       index++;
     }
 
-    console.log('\nIncomplete Message :',rateAbove200 )
+    console.log('\nIncomplete Message :', rateAbove200)
     console.log('Total Conversation :', Object.keys(conversationResult).length)
     console.log('Incomplete Conversation :', Object.keys(impactedConversation).length)
     console.log('Inbox Effected')
     console.table(inbox)
+
+    console.log('errorFields',errorMessage);
     return conversationResult;
   }
 
 
   mergeMessageToConversation(conversation, message) {
-    conversation['Extract'] = conversation['Extract'] + '<br><br>' + message['Extract'];
+    conversation['Extract'] = conversation['Extract'] + messageSeprator + message['Extract'];
     conversation['Update_at'] = message['Messagedate'];
     return conversation;
   }
@@ -203,11 +211,24 @@ class Migration {
       jsonObject[propertyName] = value;
     }
 
-    jsonObject['Extract'] = `${jsonObject['Messagedate']} | Contactname : ${jsonObject.Contactname} | ContactHandle : ${jsonObject.Contacthandle} | To : ${jsonObject.To} | Assignee : ${jsonObject.Author ||  jsonObject.Assignee ||  jsonObject.Attributedto}<br>${jsonObject['Extract']}`;
+    let assignee = jsonObject['Attributedto'] || jsonObject['Assignee'] || jsonObject['Author'] || 'none';
+
+    let readMoreLink = this.getReadMoreLink(jsonObject['ConversationAPIID'], jsonObject['MessageAPIID']);
+
+    jsonObject['Extract'] = `${jsonObject['Messagedate']} | Assignee : ${assignee} | Direction : ${jsonObject['Direction']}${readMoreLink}${inMessageSeprator}${jsonObject['Extract']}`;
     jsonObject['Created_at'] = jsonObject['Messagedate'];
     jsonObject['Update_at'] = jsonObject['Messagedate'];
 
     return jsonObject
+  }
+
+  getReadMoreLink(conversationId, messageId) {
+    if (!conversationId || !messageId) {
+      return '';
+    }
+    const url = `${readMoreEndPoint}?cnvID=${conversationId}&msgId=${messageId}`;
+    const readMoreText = ` | <a href='${url}' target='_blank'>Read More</a>`;
+    return readMoreText
   }
 
   printProgress(text, progress) {

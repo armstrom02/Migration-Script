@@ -55,61 +55,32 @@ class dbUtil {
 
     createConversationQuery(entry) {
         return `INSERT INTO conversation (
-                Conversation_ID,
-                Segment,
-                Direction,
-                Status,
-                Inbox,
-                Created_at,
-                Update_at,
-                Autoreply,
-                Reaction_time,
-                Resolution_time,
-                Final_resolution,
-                Handle_time,
-                Response_time,
-                Assignee,
-                Contact_name,
-                Contact_handle,
-                Toward,
-                Cc,
-                Bcc,
-                Data,
-                Tags,
-                New_Conversation,
-                First_response,
-                Replies_to ,
-                resolve,
-                Business_hours,
-                Subject
-            ) VALUES ( 
-                "${entry.ConversationID}", 
-                "${entry.Segment}", 
-                "${entry.Direction}", 
-                "${entry.Status}", 
-                "${entry.Inbox}",
+            ticket_id,
+            requester_email,
+            subject,
+            description,
+            created_date,
+            updated_date,
+            inbox,
+            status,
+            assignee,
+            contact_name,
+            tags,
+            source
+            ) VALUES (
+                "${entry.ConversationAPIID}", 
+                "${entry.Contacthandle}", 
+                "${entry.Subject}",
+                "${entry.Extract.replace(/\\/g, '')}", 
                 "${entry.Created_at}", 
                 "${entry.Update_at}", 
-                "${entry.Autoreply}", 
-                "${entry.Reactiontime}", 
-                "${entry.Resolutiontime}", 
-                "${entry.Finalresolution}", 
-                "${entry.Handletime}", 
-                "${entry.Responsetime}", 
-                "${entry.Assignee}", 
+                "${entry.Inbox}",
+                "${entry.Status}", 
+                "${entry.Attributedto || entry.Assignee || entry.Author}", 
                 "${entry.Contactname}", 
-                "${entry.Contacthandle}", 
-                "${entry.To}", 
-                "${entry.Cc}", 
-                "${entry.Bcc}", 
-                "${entry.Extract.replace(/\\/g, '')}", 
                 "${entry.Tags}", 
-                "${entry.NewConversation}", 
-                "${entry.Firstresponse}", 
-                "${entry.Repliesto}", 
-                "${entry.resolve}", 
-                "${entry.Businesshours}", 
-                "${entry.Subject}")`
+                "Migration"
+                )`
     }
 
 
@@ -147,9 +118,9 @@ class dbUtil {
         })
     }
 
-    updateEntryToDB(tableName, conversationID, fields) {
+    updateEntryToDB(tableName, ConversationAPIID, fields) {
         return new Promise((reslove, reject) => {
-            this.con.query(`UPDATE ${tableName} SET ? WHERE Conversation_ID = ?`, [fields, conversationID], function (error, results) {
+            this.con.query(`UPDATE ${tableName} SET ? WHERE ticket_id = ?`, [fields, ConversationAPIID], function (error, results) {
                 if (error) {
                     reject(error);
                     throw error;
