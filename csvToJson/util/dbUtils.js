@@ -53,7 +53,7 @@ class dbUtil {
     }
 
 
-    createConversationQuery(entry) {
+    createConversationQuery(entry,migrationNo) {
         return `INSERT INTO conversation (
             ticket_id,
             requester_email,
@@ -66,7 +66,8 @@ class dbUtil {
             assignee,
             contact_name,
             tags,
-            source
+            source,
+            migration_no
             ) VALUES (
                 "${entry.ConversationAPIID}", 
                 "${entry.Contacthandle}", 
@@ -79,7 +80,8 @@ class dbUtil {
                 "${entry.Attributedto || entry.Assignee || entry.Author}", 
                 "${entry.Contactname}", 
                 "${entry.Tags}", 
-                "Migration"
+                "Migration",
+                "${migrationNo}"
                 )`
     }
 
@@ -106,9 +108,9 @@ class dbUtil {
     }
 
 
-    makeEntryToDB(data) {
+    makeEntryToDB(data,migrationNo) {
         return new Promise((reslove, reject) => {
-            let query = this.createConversationQuery(data);
+            let query = this.createConversationQuery(data,migrationNo);
             this.con.query(query, function (error, results) {
                 if (error) {
                     reject(error);

@@ -9,6 +9,7 @@ let dbUtils = require("./util/dbUtils");
 const readMoreEndPoint = 'https://oneview.ixigo.com/migration';
 const inMessageSeprator = '<br>';
 const messageSeprator = '<br><br>';
+const messageHeaderSeprater = ' | '
 
 
 dbUtils.createConnection();
@@ -40,26 +41,31 @@ class Migration {
     return this;
   }
 
-  migrateCsvDataToDb(fileInputName, delimiter) {
+  migrateCsvDataToDb(fileInputName, delimiter, migrationNo) {
     if (delimiter) {
       this.delimiter = delimiter;
     }
-    this.ProcessCsvData(fileInputName);
+
+    if (!migrationNo) {
+      console.log('Please enter unique migration number');
+      return;
+    }
+
+    this.ProcessCsvData(fileInputName, migrationNo);
   }
 
-  async ProcessCsvData(fileInputName) {
+  async ProcessCsvData(fileInputName, migrationNo) {
     console.time('Processing Time');
-
     let conversationResult = await this.readlineByLine(fileInputName, this.encoding);
     await dbUtils.connect();
-    await this.saveDataToDB(conversationResult);
+    await this.saveDataToDB(conversationResult, migrationNo);
     await dbUtils.end();
 
     console.log('\n')
     console.timeEnd('Processing Time');
   }
 
-  async saveDataToDB(conversations) {
+  async saveDataToDB(conversations, migrationNo) {
     let index = 0;
     let indexCreated = 0;
     let indexUpdated = 0;
@@ -67,21 +73,17 @@ class Migration {
     for (const property in conversations) {
       index++;
       try {
-        await dbUtils.makeEntryToDB(conversations[property]);
+        await dbUtils.makeEntryToDB(conversations[property], migrationNo);
         indexCreated++;
       } catch (error) {
         if (error.code === 'ER_DUP_ENTRY') {
 
           let data = await dbUtils.getDataFromDb(this.tableName, { 'ticket_id': conversations[property]['ConversationAPIID'] });
           if (data) {
-            let fields = {
-              description: this.mergeMessages(data[0]['description'], conversations[property]['Extract']),
-              updated_date: conversations[property]['Update_at']
-            }
+            let updatedFields = this.getUpdatedFields(data[0]['description'], conversations[property]['Extract']);
+            let migration_no = data[0]['migration_no'] + `, ${migrationNo}`;
 
-            // console.log(fields, conversations[property]['ConversationAPIID'], data);
-            // break
-            await dbUtils.updateEntryToDB(this.tableName, conversations[property]['ConversationAPIID'], fields);
+            await dbUtils.updateEntryToDB(this.tableName, conversations[property]['ConversationAPIID'], {...updatedFields, migration_no});
             indexUpdated++
           }
         }
@@ -93,10 +95,45 @@ class Migration {
     return;
   }
 
-  mergeMessages(oldMessages, newMessages) {
+  getUpdatedFields(oldMessages, newMessages) {
+
     let totalMessage = [...new Set([...oldMessages.split(messageSeprator), ...newMessages.split(messageSeprator)])];
-    totalMessage.sort((a, b) => new Date(a.split(' | ')[0]) - new Date(b.split(' | ')[0]));
-    return totalMessage.join(messageSeprator);
+    totalMessage.sort((a, b) => new Date(a.split(messageHeaderSeprater)[0]) - new Date(b.split(messageHeaderSeprater)[0]));
+
+    let description = totalMessage.join(messageSeprator);
+    let created_date = totalMessage[0].split(messageHeaderSeprater)[0];
+    let updated_date = totalMessage[totalMessage.length - 1].split(messageHeaderSeprater)[0];
+    // let subject = totalMessage[0].split(inMessageSeprator)[1];
+
+    return { description, created_date, updated_date };
+  }
+
+  spillter(line, fieldDelimiter) {
+    let correctArr = [];
+    let arrStr = line.split(fieldDelimiter);
+
+    let isString = false;
+    let value = ''
+
+    for (const element of arrStr) {
+      if (isString) {
+        value = `${value}` + `${fieldDelimiter}${element}`;
+        if (element.endsWith('"')) {
+          correctArr.push(value);
+          value = '';
+          isString = false;
+        }
+        continue;
+      }
+
+      if (element.startsWith('"') && !element.endsWith('"')) {
+        value = element
+        isString = true;
+      } else {
+        correctArr.push(element);
+      }
+    }
+    return correctArr;
   }
 
 
@@ -127,9 +164,22 @@ class Migration {
       if (index === 0) {
         headers = line.split(fieldDelimiter);
       } else {
-        let currentLine = line.split(fieldDelimiter);
+
+        // let currentLine = line.split(fieldDelimiter);
+        let currentLine = this.spillter(line, fieldDelimiter);
+
+        if (currentLine.length !== 16) {
+          console.log(currentLine);
+        }
+
         if (stringUtils.hasContent(currentLine)) {
-          let jsonObject = this.buildJsonResult(headers, currentLine);
+          let jsonObject = this.buildJsonResult(headers, currentLine, line, fieldDelimiter);
+
+          // if(jsonObject.ConversationAPIID === "cnv_1evaqsl"){
+          //   console.log('\n');
+          //   console.log(jsonObject.Extract);
+          //   console.log('\n');
+          // }
 
           if (inbox[jsonObject.Inbox] === undefined) {
             inbox[jsonObject.Inbox] = { totalMessage: 1, incompleteMessage: 0, percentage: 0 }
@@ -153,8 +203,17 @@ class Migration {
 
 
           if (conversationResult[jsonObject.ConversationAPIID]) {
+            if(!conversationResult[jsonObject.ConversationAPIID].Subject || conversationResult[jsonObject.ConversationAPIID].Subject === 'Re: ' || conversationResult[jsonObject.ConversationAPIID].Subject === 'Re:' || conversationResult[jsonObject.ConversationAPIID].Subject === 'No Message' || conversationResult[jsonObject.ConversationAPIID].Subject.startsWith('#chatOpened')){
+              // console.log(conversationResult[jsonObject.ConversationAPIID].Subject , jsonObject.Extract.split(inMessageSeprator)[1])
+              conversationResult[jsonObject.ConversationAPIID].Subject = jsonObject.Extract.split(inMessageSeprator)[1];
+            }
             conversationResult[jsonObject.ConversationAPIID] = this.mergeMessageToConversation(conversationResult[jsonObject.ConversationAPIID], jsonObject)
           } else {
+            
+            if(jsonObject.Subject === '' || jsonObject.Subject === 'Re: ' || jsonObject.Subject === 'Re:'){
+              jsonObject.Subject = jsonObject.Extract.split(inMessageSeprator)[1];
+            }
+
             conversationResult[jsonObject.ConversationAPIID] = jsonObject;
           }
 
@@ -172,15 +231,15 @@ class Migration {
     console.log('Inbox Effected')
     console.table(inbox)
 
-    console.log('errorFields',errorMessage);
+    console.log('errorFields', errorMessage);
     return conversationResult;
   }
 
 
-  mergeMessageToConversation(conversation, message) {
-    conversation['Extract'] = conversation['Extract'] + messageSeprator + message['Extract'];
-    conversation['Update_at'] = message['Messagedate'];
-    return conversation;
+  mergeMessageToConversation(oldConversation, newConversation) {
+    oldConversation['Extract'] = oldConversation['Extract'] + messageSeprator + newConversation['Extract'];
+    oldConversation['Update_at'] = newConversation['Messagedate'];
+    return oldConversation;
   }
 
   getFieldDelimiter() {
@@ -190,7 +249,7 @@ class Migration {
     return defaultFieldDelimiter;
   }
 
-  buildJsonResult(headers, currentLine) {
+  buildJsonResult(headers, currentLine, line, fieldDelimiter) {
     let jsonObject = {};
     for (let j = 0; j < headers.length; j++) {
       let propertyName = stringUtils.trimPropertyName(headers[j]);
@@ -211,8 +270,39 @@ class Migration {
       jsonObject[propertyName] = value;
     }
 
-    let assignee = jsonObject['Attributedto'] || jsonObject['Assignee'] || jsonObject['Author'] || 'none';
+    if(jsonObject.Extract===''){
+      jsonObject.Extract = 'No Message'
+    }
 
+    
+
+
+    if (!jsonObject.ConversationAPIID.startsWith('cnv_')) {
+
+      console.log('\n')
+      console.log(line)
+      console.log('\n')
+      console.log('\n')
+      console.log(jsonObject)
+      console.log('\n')
+      jsonObject.MessageAPIID = this.captureText(line, 'msg_', `"${fieldDelimiter}`);
+      jsonObject.ConversationAPIID = this.captureText(line, 'cnv_', `"${fieldDelimiter}`);
+      jsonObject.Subject = currentLine[currentLine.length - 1].replace(/"/g, "");
+      // jsonObject.Extract = currentLine.slice(21).join(fieldDelimiter).split(`"${fieldDelimiter}"`)[0];
+      jsonObject.tags = line.split(`${fieldDelimiter}"msg_`)[0].split(`"${fieldDelimiter}"`).pop().replace(/"/g, '');
+
+      console.log(jsonObject)
+
+
+      let tags = currentLine.slice(21).join(fieldDelimiter).split(`"${fieldDelimiter}"`)[1];
+
+      if (jsonObject.tags !== tags) {
+        jsonObject.Extract = currentLine.slice(21).join(fieldDelimiter).split(`"${fieldDelimiter}"`)[1];
+      }
+
+    }
+
+    let assignee = jsonObject['Attributedto'] || jsonObject['Assignee'] || jsonObject['Author'] || 'none';
     let readMoreLink = this.getReadMoreLink(jsonObject['ConversationAPIID'], jsonObject['MessageAPIID']);
 
     jsonObject['Extract'] = `${jsonObject['Messagedate']} | Assignee : ${assignee} | Direction : ${jsonObject['Direction']}${readMoreLink}${inMessageSeprator}${jsonObject['Extract']}`;
@@ -220,6 +310,11 @@ class Migration {
     jsonObject['Update_at'] = jsonObject['Messagedate'];
 
     return jsonObject
+  }
+
+  captureText(line, start, end) {
+    const middleText = line.split(start)[1].split(end)[0];
+    return start + middleText;
   }
 
   getReadMoreLink(conversationId, messageId) {

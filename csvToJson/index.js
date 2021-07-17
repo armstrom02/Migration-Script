@@ -106,12 +106,12 @@ exports.hexEncoding = function () {
  * @param {outputFileName} path/filename
  *
  */
-exports.migrateCsvDataToDb = function(inputFileName, delimiter) {
+exports.migrateCsvDataToDb = function(inputFileName, delimiter, migrationNo) {
   if (!inputFileName) {
     throw new Error("inputFileName is not defined!!!");
   }
 
-  migration.migrateCsvDataToDb(inputFileName, delimiter);
+  migration.migrateCsvDataToDb(inputFileName, delimiter, migrationNo);
 };
 
 /**

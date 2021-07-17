@@ -44,6 +44,7 @@ function createTable() {
     assignee varchar(400),
     contact_name varchar(400),
     tags varchar(400),
+    migration_no varchar(400),
     PRIMARY KEY (ticket_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_general_ci;`
     , (err, data) => {
